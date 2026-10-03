@@ -20,6 +20,12 @@ TABPFN_MODEL_CACHE_DIR: str = os.environ.get(
 )
 os.environ.setdefault("TABPFN_MODEL_CACHE_DIR", TABPFN_MODEL_CACHE_DIR)
 
+# TabPFN weights are large Hugging Face files. Disable the Xet transfer path
+# by default because it can fail during reconstruction on some Windows/network
+# setups; the Hub client then uses its regular HTTP downloader.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
+
 # ---------------------------------------------------------------------------
 # Ollama / LLM
 # ---------------------------------------------------------------------------

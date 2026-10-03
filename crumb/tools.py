@@ -222,6 +222,7 @@ class ToolRegistry:
             "upper_p90": [r[3] for r in dates_in_window],
             "method": result.method,
             "interval_method": result.interval_method,
+            "warning": result.warning,
             "backtest_metrics": result.backtest_metrics,
         }
 

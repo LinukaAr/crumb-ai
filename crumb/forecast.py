@@ -12,6 +12,7 @@ Design:
 """
 from __future__ import annotations
 
+import logging
 import warnings
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,6 +33,7 @@ from crumb.features import FEATURE_COLS, build_features
 # Model cache: (item, data_hash) -> fitted TabPFNRegressor
 # ---------------------------------------------------------------------------
 _MODEL_CACHE: dict[tuple[str, str], Any] = {}
+logger = logging.getLogger(__name__)
 
 
 def clear_cache() -> None:
@@ -54,6 +56,7 @@ class ForecastResult:
     method: str               # "tabpfn" | "baseline_fallback"
     interval_method: str      # "tabpfn_quantile" | "residual_derived"
     backtest_metrics: dict[str, float] = field(default_factory=dict)
+    warning: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +127,25 @@ def _get_item_series(df: pd.DataFrame, item: str) -> pd.Series:
     return sub["units_sold"].astype(float)
 
 
+def _baseline_result(
+    item: str,
+    future_dates: list[pd.Timestamp],
+    predictions: list[float],
+    warning: str | None = None,
+) -> ForecastResult:
+    """Build a labelled baseline forecast with a simple display interval."""
+    return ForecastResult(
+        item=item,
+        dates=[d.strftime("%Y-%m-%d") for d in future_dates],
+        median=[round(max(0.0, v)) for v in predictions],
+        lower=[round(max(0.0, v * 0.75)) for v in predictions],
+        upper=[round(max(0.0, v * 1.25)) for v in predictions],
+        method="baseline_fallback",
+        interval_method="heuristic_25pct",
+        warning=warning,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -178,15 +200,7 @@ def forecast(
     # ---- Fallback: insufficient history ------------------------------------
     if n_rows < MIN_HISTORY_ROWS:
         preds = forecast_baseline(series, future_dates, method="moving_average")
-        return ForecastResult(
-            item=item,
-            dates=[d.strftime("%Y-%m-%d") for d in future_dates],
-            median=[round(max(0.0, v)) for v in preds],
-            lower=[round(max(0.0, v * 0.75)) for v in preds],
-            upper=[round(max(0.0, v * 1.25)) for v in preds],
-            method="baseline_fallback",
-            interval_method="heuristic_25pct",
-        )
+        return _baseline_result(item, future_dates, preds)
 
     # ---- Build training features ------------------------------------------
     ref_date = df["date"].min()
@@ -199,7 +213,20 @@ def forecast(
     # ---- Cache: fit if needed ----------------------------------------------
     cache_key = (item, data_hash)
     if cache_key not in _MODEL_CACHE:
-        _MODEL_CACHE[cache_key] = _fit_tabpfn(X_train, y_train)
+        try:
+            _MODEL_CACHE[cache_key] = _fit_tabpfn(X_train, y_train)
+        except (ImportError, OSError, RuntimeError, ValueError) as exc:
+            logger.warning("TabPFN unavailable; using baseline fallback: %s", exc)
+            preds = forecast_baseline(series, future_dates, method="moving_average")
+            return _baseline_result(
+                item,
+                future_dates,
+                preds,
+                warning=(
+                    "TabPFN weights could not be loaded, so this is a "
+                    "moving-average baseline estimate."
+                ),
+            )
     model = _MODEL_CACHE[cache_key]
 
     # ---- Build future features --------------------------------------------

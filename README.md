@@ -1,6 +1,6 @@
 # 🍞 Crumb – Local-First Bakery Sales Forecasting
 
-> Built for [FRIEND NAME] as part of the DEV Hacktoberfest Weekend Challenge: **Build for a Friend**.
+> Built for a friend as part of the DEV Hacktoberfest Weekend Challenge: **Build for a Friend**.
 
 Crumb is an AI-powered sales forecasting assistant for small bakeries and cafés. It lets you upload your sales history as a CSV, explore forecasts for any item, spot unusual sales days, and ask plain-language questions — **all without any data ever leaving your computer**.
 
@@ -144,6 +144,8 @@ Results are reported honestly — TabPFN doesn't always win against the baseline
 |---------|---------|-------------|
 | `TABPFN_TOKEN` | *empty* | PriorLabs API Key for TabPFN weights |
 | `TABPFN_MODEL_CACHE_DIR` | `.tabpfn_models` | Local directory for downloaded TabPFN weights |
+| `HF_HUB_DISABLE_XET` | `1` | Use regular HTTP downloads for large model files |
+| `HF_HUB_DOWNLOAD_TIMEOUT` | `60` | Hugging Face download timeout in seconds |
 | `CRUMB_MODEL` | `gemma3:4b` | Ollama model name |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama API URL |
 | `CRUMB_HOST` | `127.0.0.1` | Server bind address |

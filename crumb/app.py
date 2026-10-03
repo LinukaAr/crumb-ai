@@ -172,6 +172,7 @@ async def get_forecast(
         },
         "method": result.method,
         "interval_method": result.interval_method,
+        "warning": result.warning,
         "backtest_metrics": backtest_metrics,
         "model": CRUMB_MODEL,
     }

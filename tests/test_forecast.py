@@ -75,6 +75,16 @@ def test_tabpfn_path(mock_fit):
     assert all(v >= 0 for v in result.median)
 
 
+@patch("crumb.forecast._fit_tabpfn", side_effect=RuntimeError("download failed"))
+def test_tabpfn_download_failure_uses_baseline(mock_fit):
+    df = _make_df(n_days=80)
+    clear_cache()
+    result = forecast(df, "hash-download-failure", "Croissant", horizon_days=5)
+    assert result.method == "baseline_fallback"
+    assert result.warning is not None
+    assert len(result.median) == 5
+
+
 @patch("crumb.forecast._fit_tabpfn", side_effect=_fitted_mock_tabpfn)
 def test_predictions_clipped_at_zero(mock_fit):
     """Negative raw predictions should be clipped to 0."""
