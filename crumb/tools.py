@@ -187,8 +187,15 @@ class ToolRegistry:
     ) -> dict:
         from crumb.forecast import forecast as _forecast_fn
 
-        if not _validate_item(item, self._df):
-            return {"error": f"Item '{item}' not found. Use list_items to see available items."}
+        requested_item = item
+        item = _canonical_item_name(item, self._df)
+        if item is None:
+            return {
+                "error": (
+                    f"Item '{requested_item}' not found. "
+                    "Use list_items to see available items."
+                )
+            }
 
         try:
             start = pd.Timestamp(start_date)
@@ -196,9 +203,13 @@ class ToolRegistry:
         except (TypeError, ValueError):
             return {"error": "Invalid date format. Use YYYY-MM-DD."}
 
-        horizon = (end - start).days + 1
-        if horizon <= 0:
+        requested_horizon = (end - start).days + 1
+        if requested_horizon <= 0:
             return {"error": "end_date must be after start_date."}
+        last_date = pd.Timestamp(self._df["date"].max()).normalize()
+        if end <= last_date:
+            return {"error": "Forecast dates must be after the last date in the uploaded data."}
+        horizon = (end - last_date).days
         if horizon > 90:
             return {"error": "Forecast horizon cannot exceed 90 days."}
 
@@ -209,7 +220,7 @@ class ToolRegistry:
             for d, m, lo, hi in zip(
                 result.dates, result.median, result.lower, result.upper
             )
-            if start_date <= d <= end_date
+            if start.strftime("%Y-%m-%d") <= d <= end.strftime("%Y-%m-%d")
         ]
         if not dates_in_window:
             return {"error": "No forecast dates in the requested window."}
@@ -234,8 +245,15 @@ class ToolRegistry:
     ) -> dict:
         from crumb.anomalies import find_anomalies, find_possible_closures
 
-        if not _validate_item(item, self._df):
-            return {"error": f"Item '{item}' not found. Use list_items to see available items."}
+        requested_item = item
+        item = _canonical_item_name(item, self._df)
+        if item is None:
+            return {
+                "error": (
+                    f"Item '{requested_item}' not found. "
+                    "Use list_items to see available items."
+                )
+            }
 
         anomalies = find_anomalies(self._df, item, start=start_date, end=end_date)
         closures = find_possible_closures(self._df)
@@ -250,8 +268,16 @@ class ToolRegistry:
         from crumb.summary import summarize
 
         _validate_period(period)
-        if item != "__all__" and not _validate_item(item, self._df):
-            return {"error": f"Item '{item}' not found. Use list_items to see available items."}
+        requested_item = item
+        if item != "__all__":
+            item = _canonical_item_name(item, self._df)
+        if item is None:
+            return {
+                "error": (
+                    f"Item '{requested_item}' not found. "
+                    "Use list_items to see available items."
+                )
+            }
 
         return summarize(self._df, item, period)
 
@@ -269,7 +295,17 @@ class ToolRegistry:
 # Validation helpers
 # ---------------------------------------------------------------------------
 def _validate_item(item: str, df: pd.DataFrame) -> bool:
-    return item in df["item"].unique()
+    return _canonical_item_name(item, df) is not None
+
+
+def _canonical_item_name(item: str, df: pd.DataFrame) -> str | None:
+    """Match model output to the item's original spelling and singular form."""
+    requested = str(item).strip().casefold()
+    for actual in df["item"].unique():
+        normalized = str(actual).strip().casefold()
+        if requested == normalized or requested.rstrip("s") == normalized.rstrip("s"):
+            return str(actual)
+    return None
 
 
 def _validate_period(period: str) -> None:

@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from crumb.baselines import forecast_baseline
-from crumb.config import MIN_HISTORY_ROWS
+from crumb.config import MIN_HISTORY_ROWS, TABPFN_N_ESTIMATORS
 from crumb.features import FEATURE_COLS, build_features
 
 _HOLDOUT_DAYS = 28
@@ -176,7 +176,10 @@ def _tabpfn_predict_fold(
         X_train = feat_hist[FEATURE_COLS].values.astype(float)
         y_train = available_df["units_sold"].values.astype(float)
 
-        model = TabPFNRegressor()
+        model = TabPFNRegressor(
+            n_estimators=TABPFN_N_ESTIMATORS,
+            show_progress_bar=False,
+        )
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             model.fit(X_train, y_train)

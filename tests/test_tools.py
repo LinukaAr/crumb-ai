@@ -121,6 +121,17 @@ def test_forecast_unknown_item():
     assert "error" in result
 
 
+def test_forecast_resolves_plural_item_and_future_date():
+    reg = _make_registry()
+    result = reg.call("forecast", {
+        "item": "croissants",
+        "start_date": "2026-01-10",
+        "end_date": "2026-01-10",
+    })
+    assert result.get("item") == "Croissant"
+    assert result.get("dates") == ["2026-01-10"]
+
+
 # ---------------------------------------------------------------------------
 # Unknown tool
 # ---------------------------------------------------------------------------

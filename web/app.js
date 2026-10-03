@@ -51,6 +51,9 @@ let state = {
   selectedItem: null,
   forecastDays: 14,
   chart: null,
+  refreshVersion: 0,
+  backtestTimer: null,
+  forecastCache: {},
 };
 
 /* ---- DOM refs ---- */
@@ -64,6 +67,8 @@ const tomorrowBig  = $('tomorrow-big');
 const tomorrowRange = $('tomorrow-range');
 const tomorrowMethod = $('tomorrow-method');
 const chartTitle   = $('chart-title');
+const forecastItem = $('forecast-item');
+const headerForecastItem = $('header-forecast-item');
 const chartMeta    = $('chart-meta');
 const anomalyList  = $('anomaly-list');
 const chatMessages = $('chat-messages');
@@ -90,12 +95,14 @@ async function handleUpload(file) {
   try {
     const data = await API.upload(file);
     state.items = data.items || [];
+    state.forecastCache = {};
     populateItemSelect(state.items);
     uploadArea.querySelector('p').textContent = `✓ Loaded ${state.items.length} items`;
     if (state.items.length > 0) {
       state.selectedItem = state.items[0];
       itemSelect.value = state.selectedItem;
-      await refreshAll();
+      setActiveItem(state.selectedItem);
+      refreshAll();
     }
   } catch (err) {
     uploadArea.querySelector('p').textContent = '✗ ' + err.message;
@@ -106,17 +113,26 @@ function populateItemSelect(items) {
   itemSelect.innerHTML = items.map(it => `<option value="${esc(it)}">${esc(it)}</option>`).join('');
 }
 
-itemSelect.addEventListener('change', async () => {
+function setActiveItem(item) {
+  forecastItem.textContent = item ? `: ${item}` : '';
+  headerForecastItem.textContent = item ? `Forecasting: ${item}` : '';
+}
+
+itemSelect.addEventListener('change', () => {
   state.selectedItem = itemSelect.value;
-  await refreshAll();
+  setActiveItem(state.selectedItem);
+  const cached = state.forecastCache[state.selectedItem];
+  if (cached) renderForecast(cached);
+  refreshAll();
 });
 
 /* ---- Horizon slider ---- */
 horizonInput.addEventListener('input', () => {
   state.forecastDays = +horizonInput.value;
   horizonVal.textContent = state.forecastDays + ' days';
+  const cached = state.forecastCache[state.selectedItem];
+  if (cached) renderForecast(cached);
 });
-horizonInput.addEventListener('change', async () => { await refreshAll(); });
 
 /* ---- Chart ---- */
 function initChart() {
@@ -211,6 +227,22 @@ function updateChart(data) {
   state.chart.update();
 }
 
+function renderForecast(data) {
+  const days = state.forecastDays;
+  const visible = {
+    ...data,
+    forecast: {
+      ...data.forecast,
+      dates: data.forecast.dates.slice(0, days),
+      median: data.forecast.median.slice(0, days),
+      lower: data.forecast.lower.slice(0, days),
+      upper: data.forecast.upper.slice(0, days),
+    },
+  };
+  updateChart(visible);
+  updateTomorrow(visible);
+}
+
 /* ---- Tomorrow card ---- */
 function updateTomorrow(data) {
   if (!data.forecast || !data.forecast.dates.length) return;
@@ -225,6 +257,11 @@ function updateTomorrow(data) {
     ? '⚠ Limited data – baseline estimate'
     : `Model: ${data.interval_method === 'tabpfn_quantile' ? 'TabPFN (quantile)' : 'TabPFN + residuals'}`;
   chartTitle.textContent = item;
+  if (data.backtest_pending) {
+    chartMeta.textContent = `Backtest running in background | Model: ${data.model}`;
+  } else if (!Number.isFinite(data.backtest_metrics?.mae_tabpfn)) {
+    chartMeta.textContent = `Backtest unavailable | Model: ${data.model}`;
+  }
   if (data.backtest_metrics && data.backtest_metrics.mae_tabpfn) {
     const mae = data.backtest_metrics.mae_tabpfn;
     chartMeta.textContent = `Backtest MAE: ${mae != null ? mae.toFixed(1) : '–'} units | Model: ${data.model}`;
@@ -261,13 +298,21 @@ function renderAnomalies(data) {
 /* ---- Refresh all panels ---- */
 async function refreshAll() {
   if (!state.selectedItem) return;
+  const refreshVersion = ++state.refreshVersion;
+  const requestedItem = state.selectedItem;
+  chartMeta.textContent = 'Loading forecast...';
   try {
+    const cachedForecast = state.forecastCache[requestedItem];
+    const forecastPromise = cachedForecast && !cachedForecast.backtest_pending
+      ? Promise.resolve(cachedForecast)
+      : API.forecast(requestedItem, 30);
     const [fcData, anomData] = await Promise.all([
-      API.forecast(state.selectedItem, state.forecastDays),
-      API.anomalies(state.selectedItem),
+      forecastPromise,
+      API.anomalies(requestedItem),
     ]);
-    updateChart(fcData);
-    updateTomorrow(fcData);
+    if (refreshVersion !== state.refreshVersion) return;
+    state.forecastCache[requestedItem] = fcData;
+    renderForecast(fcData);
     renderAnomalies(anomData);
   } catch (err) {
     console.error('Refresh error', err);

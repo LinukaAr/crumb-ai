@@ -35,8 +35,9 @@ CRUMB_MODEL: str = os.environ.get("CRUMB_MODEL", "gemma3:4b")
 #: Base URL for the local Ollama HTTP API.
 OLLAMA_BASE_URL: str = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 
-#: Timeout in seconds for individual Ollama requests.
-OLLAMA_TIMEOUT: float = float(os.environ.get("OLLAMA_TIMEOUT", "60"))
+#: Timeout in seconds for individual Ollama requests. The first local request
+#: can include model loading, especially on CPU-only machines.
+OLLAMA_TIMEOUT: float = float(os.environ.get("OLLAMA_TIMEOUT", "180"))
 
 # ---------------------------------------------------------------------------
 # Data
@@ -46,6 +47,12 @@ MAX_UPLOAD_BYTES: int = 10 * 1024 * 1024
 
 #: Minimum number of daily rows required to use TabPFN (else baseline fallback).
 MIN_HISTORY_ROWS: int = 60
+
+# Fewer ensemble estimators keep interactive local forecasts responsive. Set
+# TABPFN_N_ESTIMATORS=auto to use TabPFN's automatic ensemble size.
+TABPFN_N_ESTIMATORS: int | str = os.environ.get("TABPFN_N_ESTIMATORS", "4")
+if TABPFN_N_ESTIMATORS != "auto":
+    TABPFN_N_ESTIMATORS = int(TABPFN_N_ESTIMATORS)
 
 # ---------------------------------------------------------------------------
 # Forecasting

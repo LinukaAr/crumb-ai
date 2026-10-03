@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Crumb – Bakery Forecasting</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=4" />
   <!-- Chart.js is vendored locally – no CDN, works offline -->
   <script src="/static/vendor/chart.min.js"></script>
 </head>
@@ -14,6 +14,7 @@
   <!-- ===== Header ===== -->
   <header>
     <h1>🍞 Crumb <span>Bakery Forecasting</span></h1>
+    <span id="header-forecast-item" class="header-forecast-item"></span>
     <div class="status-row">
       <span id="ollama-status" class="badge badge-warn">Ollama: checking…</span>
       <span id="model-badge" class="badge badge-ok" style="background:#e8ddd0;color:#7a6652;"></span>
@@ -73,7 +74,7 @@
       <!-- Chart -->
       <div class="chart-panel">
         <div class="chart-header">
-          <h2>Forecast Chart</h2>
+          <h2>Forecast Chart <span class="forecast-item" id="forecast-item"></span></h2>
           <span class="chart-meta" id="chart-meta"></span>
         </div>
         <div class="chart-container">
@@ -95,7 +96,7 @@
         <div class="chat-input-row">
           <textarea
             id="chat-input"
-            placeholder="Ask me anything — e.g. "How many croissants on Saturday?""
+            placeholder="Ask me anything""
             rows="1"
           ></textarea>
           <button id="send-btn" title="Send (Enter)">Send</button>
@@ -106,6 +107,6 @@
   </div>
 </div>
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=4"></script>
 </body>
 </html>

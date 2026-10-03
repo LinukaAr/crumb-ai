@@ -26,6 +26,7 @@ from crumb.config import (
     QUANTILE_LOWER,
     QUANTILE_MED,
     QUANTILE_UPPER,
+    TABPFN_N_ESTIMATORS,
 )
 from crumb.features import FEATURE_COLS, build_features
 
@@ -71,7 +72,10 @@ def _fit_tabpfn(X_train: np.ndarray, y_train: np.ndarray) -> Any:
             "tabpfn is not installed. Run: pip install tabpfn"
         ) from exc
 
-    model = TabPFNRegressor()
+    model = TabPFNRegressor(
+        n_estimators=TABPFN_N_ESTIMATORS,
+        show_progress_bar=False,
+    )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         model.fit(X_train, y_train)

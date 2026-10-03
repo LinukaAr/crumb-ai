@@ -144,10 +144,12 @@ Results are reported honestly — TabPFN doesn't always win against the baseline
 |---------|---------|-------------|
 | `TABPFN_TOKEN` | *empty* | PriorLabs API Key for TabPFN weights |
 | `TABPFN_MODEL_CACHE_DIR` | `.tabpfn_models` | Local directory for downloaded TabPFN weights |
+| `TABPFN_N_ESTIMATORS` | `4` | Local ensemble size; use `auto` for TabPFN's automatic setting |
 | `HF_HUB_DISABLE_XET` | `1` | Use regular HTTP downloads for large model files |
 | `HF_HUB_DOWNLOAD_TIMEOUT` | `60` | Hugging Face download timeout in seconds |
 | `CRUMB_MODEL` | `gemma3:4b` | Ollama model name |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama API URL |
+| `OLLAMA_TIMEOUT` | `180` | Seconds allowed for local model loading and generation |
 | `CRUMB_HOST` | `127.0.0.1` | Server bind address |
 | `CRUMB_PORT` | `8000` | Server port |
 | `CRUMB_ANOMALY_THRESHOLD` | `2.5` | MAD multiplier for anomaly flagging |

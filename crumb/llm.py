@@ -53,6 +53,11 @@ def _ollama_generate(prompt: str, model: str = CRUMB_MODEL) -> str:
             f"Cannot reach Ollama at {OLLAMA_BASE_URL}. "
             "Start it with: ollama serve"
         )
+    except httpx.TimeoutException as exc:
+        raise OllamaUnavailableError(
+            f"Ollama took too long to respond while loading '{model}'. "
+            "Try again once the model is warm, or use a smaller local model."
+        ) from exc
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
             raise OllamaModelMissingError(
@@ -77,6 +82,11 @@ def _ollama_chat(messages: list[dict], model: str = CRUMB_MODEL) -> str:
             f"Cannot reach Ollama at {OLLAMA_BASE_URL}. "
             "Start it with: ollama serve"
         )
+    except httpx.TimeoutException as exc:
+        raise OllamaUnavailableError(
+            f"Ollama took too long to respond while loading '{model}'. "
+            "Try again once the model is warm, or use a smaller local model."
+        ) from exc
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
             raise OllamaModelMissingError(
@@ -111,18 +121,30 @@ def _resolve_dates_for_forecast(args: dict) -> dict:
     today = _today()
     args = dict(args)
 
-    if "start_date" not in args or not args.get("start_date"):
-        args["start_date"] = today.isoformat()
-    if "end_date" not in args or not args.get("end_date"):
-        # Default: 7-day horizon
-        args["end_date"] = (today + datetime.timedelta(days=6)).isoformat()
+    # Models sometimes emit a natural-language `date` field alongside a
+    # generated range. Prefer the user's date phrase in that case.
+    if args.get("date"):
+        args["start_date"] = args["date"]
+        args["end_date"] = args["date"]
 
-    # Resolve weekday names to actual dates
-    for key in ("start_date", "end_date"):
-        val = str(args[key])
-        resolved = _resolve_weekday_or_relative(val, today)
-        if resolved:
-            args[key] = resolved.isoformat()
+    start_text = str(args.get("start_date") or today.isoformat())
+    start_date = _resolve_weekday_or_relative(start_text, today)
+    args["start_date"] = start_date.isoformat() if start_date else start_text
+
+    end_text = args.get("end_date")
+    if end_text:
+        end_date = _resolve_weekday_or_relative(str(end_text), today)
+        args["end_date"] = end_date.isoformat() if end_date else str(end_text)
+        if start_date and end_date and end_date < start_date:
+            args["end_date"] = start_date.isoformat()
+    else:
+        # A single relative day such as "Saturday" means that day, not a
+        # seven-day window ending on an unrelated date.
+        args["end_date"] = (
+            start_date.isoformat()
+            if start_date
+            else (today + datetime.timedelta(days=6)).isoformat()
+        )
 
     return args
 
@@ -189,6 +211,16 @@ def _resolve_period(period: str | None) -> str:
 # ---------------------------------------------------------------------------
 # Keyword-based fallback router
 # ---------------------------------------------------------------------------
+def _looks_like_forecast_intent(message: str) -> bool:
+    """Recognise inventory questions that must use the forecast tool."""
+    msg = message.casefold()
+    weekdays = tuple(_WEEKDAY_NAMES)
+    return any(
+        word in msg
+        for word in ("forecast", "bake", "make", "predict", "how many", *weekdays)
+    )
+
+
 def _keyword_route(message: str, registry: ToolRegistry) -> tuple[str, dict]:
     """
     Simple rules-based router as fallback when the LLM produces invalid JSON.
@@ -208,11 +240,20 @@ def _keyword_route(message: str, registry: ToolRegistry) -> tuple[str, dict]:
             mentioned_item = it
             break
 
-    if any(w in msg for w in ("forecast", "bake", "make", "predict", "how many", "saturday", "sunday")):
+    if _looks_like_forecast_intent(msg):
         item = mentioned_item or (items[0] if items else "unknown")
         today = _today()
-        start = today.isoformat()
-        end = (today + datetime.timedelta(days=6)).isoformat()
+        requested_weekday = next(
+            (day for day in _WEEKDAY_NAMES if day in msg),
+            None,
+        )
+        requested_date = (
+            _resolve_weekday_or_relative(requested_weekday, today)
+            if requested_weekday
+            else None
+        )
+        start = (requested_date or today).isoformat()
+        end = start if requested_date else (today + datetime.timedelta(days=6)).isoformat()
         return "forecast", {"item": item, "start_date": start, "end_date": end}
 
     if any(w in msg for w in ("anomal", "unusual", "odd", "weird", "strange", "spike", "drop")):
@@ -276,11 +317,23 @@ def _route(message: str, registry: ToolRegistry) -> tuple[str, dict]:
             data = json.loads(raw)
             tool_name = data.get("tool", "")
             args = data.get("args", {})
+            if not isinstance(args, dict):
+                raise TypeError("Tool args must be an object")
             if tool_name not in TOOL_SCHEMA_MAP:
                 raise ValueError(f"Unknown tool: {tool_name}")
+            if _looks_like_forecast_intent(message) and tool_name != "forecast":
+                logger.info("Overriding route %s with forecast intent", tool_name)
+                tool_name, args = _keyword_route(message, registry)
             # Resolve dates
             if tool_name == "forecast":
                 args = _resolve_dates_for_forecast(args)
+                # Keep the forecast tool contract strict when the model adds
+                # unsupported metadata such as `date`.
+                args = {
+                    key: args[key]
+                    for key in ("item", "start_date", "end_date")
+                    if key in args
+                }
             if "period" in args:
                 args["period"] = _resolve_period(args.get("period"))
             logger.debug("Routed to %s %s (attempt %d)", tool_name, args, attempt + 1)

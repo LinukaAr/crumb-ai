@@ -16,6 +16,7 @@ from crumb.llm import (
     OllamaUnavailableError,
     _extract_numbers,
     _keyword_route,
+    _route,
     _verify_numbers,
     chat,
 )
@@ -170,6 +171,41 @@ def test_route_top_items(mock_chat, mock_generate):
 
     result = chat("What's my best-selling item?", reg)
     assert result["tool"] == "top_items"
+
+
+@patch("crumb.llm._ollama_generate")
+def test_forecast_intent_overrides_wrong_llm_tool(mock_generate):
+    reg = _make_registry()
+    mock_generate.return_value = json.dumps({
+        "tool": "top_items",
+        "args": {"period": "last_30_days", "metric": "units"},
+    })
+
+    tool, args = _route("How many croissants should I bake Saturday?", reg)
+    assert tool == "forecast"
+    assert args["item"] == "Croissant"
+    assert args["start_date"] == args["end_date"]
+
+
+@patch("crumb.llm._ollama_generate")
+def test_forecast_route_normalizes_model_date_alias(mock_generate):
+    """A model date alias must not break the strict forecast tool contract."""
+    reg = _make_registry()
+    mock_generate.return_value = json.dumps({
+        "tool": "forecast",
+        "args": {
+            "item": "Croissant",
+            "date": "saturday",
+            "start_date": "2026-10-04",
+            "end_date": "2026-10-10",
+        },
+    })
+
+    tool, args = _route("How many croissants should I bake Saturday?", reg)
+
+    assert tool == "forecast"
+    assert set(args) == {"item", "start_date", "end_date"}
+    assert args["start_date"] == args["end_date"]
 
 
 # ---------------------------------------------------------------------------

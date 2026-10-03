@@ -17,7 +17,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -40,6 +40,34 @@ _STATE: dict[str, Any] = {
     "report": None,
 }
 _registry = ToolRegistry()
+_BACKTEST_CACHE: dict[tuple[str, str], dict[str, float | None]] = {}
+_BACKTEST_IN_FLIGHT: set[tuple[str, str]] = set()
+_FORECAST_CACHE: dict[tuple[str, str, int], ForecastResult] = {}
+_ANOMALY_CACHE: dict[tuple[str, str, str | None, str | None], dict[str, Any]] = {}
+
+
+def _backtest_metrics(result: dict[str, Any]) -> dict[str, float | None]:
+    """Keep only the metrics exposed by the forecast endpoint."""
+    return {
+        "mae_tabpfn": result.get("mae_tabpfn"),
+        "wape_tabpfn": result.get("wape_tabpfn"),
+        "mae_naive": result.get("mae_naive"),
+        "mae_ma": result.get("mae_ma"),
+    }
+
+
+def _compute_backtest(df: Any, data_hash: str, item: str) -> None:
+    """Compute and cache one item's backtest outside the request path."""
+    cache_key = (data_hash, item)
+    try:
+        from crumb.backtest import _backtest_item
+
+        _BACKTEST_CACHE[cache_key] = _backtest_metrics(_backtest_item(df, item))
+    except (ImportError, KeyError, RuntimeError, TypeError, ValueError) as exc:
+        logger.warning("Backtest failed for %s: %s", item, exc)
+        _BACKTEST_CACHE[cache_key] = {}
+    finally:
+        _BACKTEST_IN_FLIGHT.discard(cache_key)
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +125,10 @@ async def upload_csv(file: UploadFile = File(...)):  # noqa: B008
 
     # Clear the model cache and update state
     clear_cache()
+    _BACKTEST_CACHE.clear()
+    _BACKTEST_IN_FLIGHT.clear()
+    _FORECAST_CACHE.clear()
+    _ANOMALY_CACHE.clear()
     h = dataframe_hash(df)
     _STATE["df"] = df
     _STATE["data_hash"] = h
@@ -118,6 +150,7 @@ async def upload_csv(file: UploadFile = File(...)):  # noqa: B008
 
 @app.get("/api/forecast")
 async def get_forecast(
+    background_tasks: BackgroundTasks,
     item: str = Query(..., description="Item name"),
     days: int = Query(14, ge=1, le=90, description="Forecast horizon in days"),
 ):
@@ -144,22 +177,27 @@ async def get_forecast(
         "units": [round(float(u)) for u in item_df["units_sold"]],
     }
 
-    # Forecast
-    result: ForecastResult = forecast(df, _STATE["data_hash"], item, horizon_days=days)
+    # Forecasts are deterministic for a loaded dataset, item, and horizon.
+    forecast_key = (_STATE["data_hash"], item, days)
+    if forecast_key not in _FORECAST_CACHE:
+        _FORECAST_CACHE[forecast_key] = forecast(
+            df, _STATE["data_hash"], item, horizon_days=days
+        )
+    result: ForecastResult = _FORECAST_CACHE[forecast_key]
 
-    # Backtest metrics (lazy: run on first request for item)
-    backtest_metrics: dict = {}
-    try:
-        from crumb.backtest import _backtest_item
-        bt = _backtest_item(df, item)
-        backtest_metrics = {
-            "mae_tabpfn": bt.get("mae_tabpfn"),
-            "wape_tabpfn": bt.get("wape_tabpfn"),
-            "mae_naive": bt.get("mae_naive"),
-            "mae_ma": bt.get("mae_ma"),
-        }
-    except (ImportError, KeyError, RuntimeError, TypeError, ValueError) as exc:
-        logger.warning("Backtest failed for %s: %s", item, exc)
+    # Backtests retrain models, so cache them and compute them after the fast
+    # forecast response has been sent. The frontend refreshes while pending.
+    cache_key = (_STATE["data_hash"], item)
+    backtest_pending = cache_key not in _BACKTEST_CACHE
+    if backtest_pending and cache_key not in _BACKTEST_IN_FLIGHT:
+        _BACKTEST_IN_FLIGHT.add(cache_key)
+        background_tasks.add_task(
+            _compute_backtest,
+            df.copy(deep=True),
+            _STATE["data_hash"],
+            item,
+        )
+    backtest_metrics = _BACKTEST_CACHE.get(cache_key, {})
 
     return {
         "item": item,
@@ -174,6 +212,7 @@ async def get_forecast(
         "interval_method": result.interval_method,
         "warning": result.warning,
         "backtest_metrics": backtest_metrics,
+        "backtest_pending": backtest_pending,
         "model": CRUMB_MODEL,
     }
 
@@ -192,6 +231,10 @@ async def get_anomalies(
     if item not in df["item"].unique():
         raise HTTPException(status_code=404, detail=f"Item '{item}' not found.")
 
+    cache_key = (_STATE["data_hash"], item, start, end)
+    if cache_key in _ANOMALY_CACHE:
+        return _ANOMALY_CACHE[cache_key]
+
     from dataclasses import asdict
 
     from crumb.anomalies import find_anomalies, find_possible_closures
@@ -199,11 +242,13 @@ async def get_anomalies(
     anomalies = find_anomalies(df, item, start=start, end=end)
     closures = find_possible_closures(df)
 
-    return {
+    response = {
         "item": item,
         "anomalies": [asdict(a) for a in anomalies],
         "possible_closure_dates": closures,
     }
+    _ANOMALY_CACHE[cache_key] = response
+    return response
 
 
 @app.post("/api/chat")
