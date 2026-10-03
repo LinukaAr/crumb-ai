@@ -54,6 +54,12 @@ header h1 {
 
 header h1 span { color: var(--text); font-weight: 400; font-size: 1rem; }
 
+.header-forecast-item {
+  color: var(--text);
+  font-size: .95rem;
+  font-weight: 600;
+}
+
 .privacy-badge {
   margin-left: auto;
   background: var(--accent-lt);
@@ -191,6 +197,7 @@ header h1 span { color: var(--text); font-weight: 400; font-size: 1rem; }
 }
 
 .chart-header h2 { font-size: 1.1rem; }
+.forecast-item { color: var(--accent); font-weight: 600; }
 
 .chart-meta { font-size: .8rem; color: var(--muted); }
 
