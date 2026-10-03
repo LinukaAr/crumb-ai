@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Crumb – Bakery Forecasting</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <!-- Chart.js is vendored locally – no CDN, works offline -->
+  <script src="/static/vendor/chart.min.js"></script>
+</head>
+<body>
+<div class="app-wrapper">
+
+  <!-- ===== Header ===== -->
+  <header>
+    <h1>🍞 Crumb <span>Bakery Forecasting</span></h1>
+    <div class="status-row">
+      <span id="ollama-status" class="badge badge-warn">Ollama: checking…</span>
+      <span id="model-badge" class="badge badge-ok" style="background:#e8ddd0;color:#7a6652;"></span>
+      <span id="method-badge" class="badge badge-ok"></span>
+    </div>
+    <span class="privacy-badge">🔒 Running locally — nothing leaves this computer</span>
+  </header>
+
+  <div class="main-grid">
+
+    <!-- ===== Sidebar ===== -->
+    <aside class="sidebar">
+
+      <!-- Upload -->
+      <div>
+        <div class="section-label">Sales Data</div>
+        <div class="upload-area" id="upload-area">
+          <input type="file" id="file-input" accept=".csv" />
+          <div class="upload-icon">📂</div>
+          <p>Drop your CSV here or <strong>browse</strong></p>
+        </div>
+      </div>
+
+      <!-- Item selector -->
+      <div>
+        <div class="section-label">Item</div>
+        <select id="item-select">
+          <option value="" disabled selected>Upload data first…</option>
+        </select>
+      </div>
+
+      <!-- Forecast horizon -->
+      <div>
+        <div class="section-label">Forecast Horizon</div>
+        <div class="slider-row">
+          <input type="range" id="horizon-input" min="1" max="30" value="14" />
+          <span class="slider-val" id="horizon-val">14 days</span>
+        </div>
+      </div>
+
+      <!-- Tomorrow card -->
+      <div>
+        <div class="section-label">Tomorrow</div>
+        <div class="tomorrow-card">
+          <h3 id="chart-title">–</h3>
+          <div class="tomorrow-big" id="tomorrow-big">–</div>
+          <div class="tomorrow-range" id="tomorrow-range"></div>
+          <div class="tomorrow-method" id="tomorrow-method"></div>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- ===== Main content ===== -->
+    <main class="content">
+
+      <!-- Chart -->
+      <div class="chart-panel">
+        <div class="chart-header">
+          <h2>Forecast Chart</h2>
+          <span class="chart-meta" id="chart-meta"></span>
+        </div>
+        <div class="chart-container">
+          <canvas id="forecast-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- Anomalies -->
+      <div class="anomaly-panel">
+        <div class="section-label" style="margin-bottom:8px;">Unusual Days</div>
+        <ul class="anomaly-list" id="anomaly-list">
+          <li style="color:var(--muted);font-size:.85rem;">Upload data to see anomalies.</li>
+        </ul>
+      </div>
+
+      <!-- Chat -->
+      <div class="chat-panel">
+        <div class="chat-messages" id="chat-messages"></div>
+        <div class="chat-input-row">
+          <textarea
+            id="chat-input"
+            placeholder="Ask me anything — e.g. "How many croissants on Saturday?""
+            rows="1"
+          ></textarea>
+          <button id="send-btn" title="Send (Enter)">Send</button>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
