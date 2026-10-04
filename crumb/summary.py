@@ -15,7 +15,11 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _parse_period(df: pd.DataFrame, period: str) -> pd.DataFrame:
+def _parse_period(
+    df: pd.DataFrame,
+    period: str,
+    date: str | None = None,
+) -> pd.DataFrame:
     """
     Filter *df* to rows matching *period*.
 
@@ -24,6 +28,10 @@ def _parse_period(df: pd.DataFrame, period: str) -> pd.DataFrame:
     - ``"last_30_days"``
     - ``"month:YYYY-MM"``
     """
+    if date is not None:
+        target = pd.Timestamp(date).normalize()
+        return df[df["date"].dt.normalize() == target]
+
     today = pd.Timestamp.now().normalize()
 
     if period == "last_7_days":
@@ -81,7 +89,12 @@ _DOW_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-def summarize(df: pd.DataFrame, item: str, period: str) -> dict:
+def summarize(
+    df: pd.DataFrame,
+    item: str,
+    period: str = "last_30_days",
+    date: str | None = None,
+) -> dict:
     """
     Return a summary dictionary for *item* over *period*.
 
@@ -94,7 +107,7 @@ def summarize(df: pd.DataFrame, item: str, period: str) -> dict:
     - ``period``: the period string
     - ``item``: the item name
     """
-    period_df = _parse_period(df, period)
+    period_df = _parse_period(df, period, date=date)
     if item != "__all__":
         period_df = period_df[period_df["item"] == item]
     period_df = period_df.dropna(subset=["units_sold"])
@@ -102,7 +115,7 @@ def summarize(df: pd.DataFrame, item: str, period: str) -> dict:
     if period_df.empty:
         return {
             "item": item,
-            "period": period,
+            "period": date or period,
             "total": 0,
             "avg_per_day": 0.0,
             "best_weekday": None,
@@ -122,7 +135,7 @@ def summarize(df: pd.DataFrame, item: str, period: str) -> dict:
     worst_weekday = _DOW_NAMES[worst_dow] if worst_dow is not None else None
 
     # vs prior period
-    prior_df = _prior_period(df, period)
+    prior_df = pd.DataFrame() if date is not None else _prior_period(df, period)
     if item != "__all__":
         prior_df = prior_df[prior_df["item"] == item]
     prior_df = prior_df.dropna(subset=["units_sold"])
@@ -135,7 +148,7 @@ def summarize(df: pd.DataFrame, item: str, period: str) -> dict:
 
     return {
         "item": item,
-        "period": period,
+        "period": date or period,
         "total": round(total),
         "avg_per_day": round(avg_per_day, 1),
         "best_weekday": best_weekday,

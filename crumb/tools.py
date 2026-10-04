@@ -78,14 +78,20 @@ TOOL_SCHEMAS: list[dict] = [
                 "item": {"type": "string", "description": "Item name. Use '__all__' for all items."},
                 "period": {
                     "type": "string",
-                    "enum": ["last_7_days", "last_30_days"],
                     "description": (
                         "Period to summarise: 'last_7_days', 'last_30_days', "
-                        "or 'month:YYYY-MM'."
+                        "or 'month:YYYY-MM'. Omit when asking about one date."
+                    ),
+                },
+                "date": {
+                    "type": "string",
+                    "description": (
+                        "One specific sales date in YYYY-MM-DD format. "
+                        "Use this instead of period for questions about a day."
                     ),
                 },
             },
-            "required": ["item", "period"],
+            "required": ["item"],
         },
     },
     {
@@ -264,10 +270,21 @@ class ToolRegistry:
             "possible_closure_dates": closures,
         }
 
-    def _summarize(self, item: str, period: str) -> dict:
+    def _summarize(
+        self,
+        item: str,
+        period: str = "last_30_days",
+        date: str | None = None,
+    ) -> dict:
         from crumb.summary import summarize
 
-        _validate_period(period)
+        if date is None:
+            _validate_period(period)
+        else:
+            try:
+                pd.Timestamp(date)
+            except (TypeError, ValueError):
+                return {"error": "Invalid date format. Use YYYY-MM-DD."}
         requested_item = item
         if item != "__all__":
             item = _canonical_item_name(item, self._df)
@@ -279,7 +296,7 @@ class ToolRegistry:
                 )
             }
 
-        return summarize(self._df, item, period)
+        return summarize(self._df, item, period, date=date)
 
     def _top_items(self, period: str, metric: str) -> dict:
         from crumb.summary import top_items

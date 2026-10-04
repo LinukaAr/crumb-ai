@@ -23,6 +23,7 @@ import re
 from typing import Any
 
 import httpx
+import pandas as pd
 
 from crumb.config import CRUMB_MODEL, OLLAMA_BASE_URL, OLLAMA_TIMEOUT
 from crumb.tools import TOOL_SCHEMA_MAP, ToolRegistry
@@ -217,8 +218,70 @@ def _looks_like_forecast_intent(message: str) -> bool:
     weekdays = tuple(_WEEKDAY_NAMES)
     return any(
         word in msg
-        for word in ("forecast", "bake", "make", "predict", "how many", *weekdays)
+        for word in (
+            "forecast", "bake", "make", "predict", "should i", "plan for",
+            "expected", "next week", "next month", *weekdays,
+        )
     )
+
+
+def _looks_like_historical_intent(message: str) -> bool:
+    """Recognise questions asking what was sold rather than what to make."""
+    msg = message.casefold()
+    return any(
+        phrase in msg
+        for phrase in (
+            "sold", "sales", "sell count", "how many did", "what happened",
+            "what happened on", "how did we do", "revenue", "earnings",
+        )
+    )
+
+
+def _extract_date_text(message: str) -> str | None:
+    """Extract common date phrases so date questions do not depend on the LLM."""
+    patterns = (
+        r"\b\d{4}-\d{1,2}-\d{1,2}\b",
+        r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|"
+        r"jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|"
+        r"oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?"
+        r"(?:,?\s+\d{4})?\b",
+        r"\b\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, message, flags=re.IGNORECASE)
+        if match:
+            return match.group(0)
+    return None
+
+
+def _normalise_date_text(text: str, registry: ToolRegistry) -> str | None:
+    """Parse a user date and infer an omitted year from the uploaded data."""
+    cleaned = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", text.strip(), flags=re.I)
+    try:
+        parsed = pd.Timestamp(cleaned)
+    except (TypeError, ValueError):
+        # Dotted dates are commonly entered as day.month.
+        match = re.fullmatch(r"(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?", cleaned)
+        if not match:
+            return None
+        day, month, year = (int(value) if value else None for value in match.groups())
+        if year is None:
+            year = int(pd.Timestamp(registry._df["date"].max()).year)
+        try:
+            parsed = pd.Timestamp(year=year, month=month, day=day)
+        except (TypeError, ValueError):
+            return None
+    if not re.search(r"\d{4}", cleaned):
+        # Prefer a matching date already present in the CSV for month/day
+        matches = registry._df[
+            (registry._df["date"].dt.month == parsed.month)
+            & (registry._df["date"].dt.day == parsed.day)
+        ]
+        if not matches.empty:
+            parsed = pd.Timestamp(matches["date"].max())
+        else:
+            parsed = parsed.replace(year=int(pd.Timestamp(registry._df["date"].max()).year))
+    return parsed.strftime("%Y-%m-%d")
 
 
 def _keyword_route(message: str, registry: ToolRegistry) -> tuple[str, dict]:
@@ -240,7 +303,14 @@ def _keyword_route(message: str, registry: ToolRegistry) -> tuple[str, dict]:
             mentioned_item = it
             break
 
-    if _looks_like_forecast_intent(msg):
+    date_text = _extract_date_text(message)
+    if _looks_like_historical_intent(msg) and date_text:
+        item = mentioned_item or "__all__"
+        date = _normalise_date_text(date_text, registry)
+        if date:
+            return "summarize", {"item": item, "date": date}
+
+    if _looks_like_forecast_intent(msg) and not _looks_like_historical_intent(msg):
         item = mentioned_item or (items[0] if items else "unknown")
         today = _today()
         requested_weekday = next(
@@ -268,8 +338,8 @@ def _keyword_route(message: str, registry: ToolRegistry) -> tuple[str, dict]:
     if any(w in msg for w in ("list", "what item", "which item", "available")):
         return "list_items", {}
 
-    # Default: summarize
-    item = mentioned_item or (items[0] if items else "unknown")
+    # Default: summarize all items rather than silently choosing the first one.
+    item = mentioned_item or "__all__"
     period = "last_7_days" if "week" in msg or "7" in msg else "last_30_days"
     return "summarize", {"item": item, "period": period}
 
@@ -287,6 +357,10 @@ For dates, use ISO format YYYY-MM-DD if you know the exact date. For relative
 expressions like "Saturday" or "next week", output them as-is (e.g. "saturday")
 and they will be resolved by the system. For periods, use one of:
 last_7_days, last_30_days, or month:YYYY-MM.
+For a question about one date, use summarize with {"item": "...", "date": "YYYY-MM-DD"}.
+Use item "__all__" when the question is about the whole uploaded dataset.
+Historical questions containing "sold", "sales", or "what happened" must use summarize,
+never forecast. Forecast is only for future planning or explicit forecasts.
 
 Output ONLY valid JSON. No explanation.
 """
@@ -324,6 +398,9 @@ def _route(message: str, registry: ToolRegistry) -> tuple[str, dict]:
             if _looks_like_forecast_intent(message) and tool_name != "forecast":
                 logger.info("Overriding route %s with forecast intent", tool_name)
                 tool_name, args = _keyword_route(message, registry)
+            elif _looks_like_historical_intent(message) and _extract_date_text(message):
+                logger.info("Overriding route %s with historical date lookup", tool_name)
+                tool_name, args = _keyword_route(message, registry)
             # Resolve dates
             if tool_name == "forecast":
                 args = _resolve_dates_for_forecast(args)
@@ -334,6 +411,14 @@ def _route(message: str, registry: ToolRegistry) -> tuple[str, dict]:
                     for key in ("item", "start_date", "end_date")
                     if key in args
                 }
+            elif tool_name == "summarize":
+                date_text = args.get("date") or _extract_date_text(message)
+                if _looks_like_historical_intent(message) and date_text:
+                    args["date"] = _normalise_date_text(date_text, registry) or date_text
+                if args.get("date") is None:
+                    args.pop("date", None)
+                args.setdefault("item", "__all__")
+                args.setdefault("period", "last_30_days")
             if "period" in args:
                 args["period"] = _resolve_period(args.get("period"))
             logger.debug("Routed to %s %s (attempt %d)", tool_name, args, attempt + 1)
