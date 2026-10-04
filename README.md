@@ -1,8 +1,8 @@
-# 🍞 Crumb – Local-First Bakery Sales Forecasting
+# 🍞 Crumb – Local First Bakery Sales Forecasting
 
 > Built for a friend as part of the DEV Hacktoberfest Weekend Challenge: **Build for a Friend**.
 
-Crumb is an AI-powered sales forecasting assistant for small bakeries and cafés. It lets you upload your sales history as a CSV, explore forecasts for any item, spot unusual sales days, and ask plain-language questions — **all without any data ever leaving your computer**.
+Crumb is an AI powered sales forecasting assistant for small bakeries and cafés. It lets you upload your sales history as a CSV, explore forecasts for any item, spot unusual sales days, and ask plain language questions — **all without any data ever leaving your computer**.
 
 ![Screenshot placeholder](docs/ui.png)
 
@@ -14,7 +14,7 @@ Crumb is an AI-powered sales forecasting assistant for small bakeries and cafés
 |---------|-------------|
 | 📈 **Forecasting** | Predicts the next 1–30 days of sales per item, with a confidence range |
 | 🔍 **Anomaly detection** | Flags unusual days (spikes, drops, closures) automatically |
-| 💬 **Plain-language chat** | Ask "How many croissants on Saturday?" and get a friendly answer |
+| 💬 **Plain language chat** | Ask "How many croissants on Saturday?" and get a friendly answer |
 | 🔒 **100% local** | No cloud API calls, no telemetry, works offline |
 
 ---
@@ -83,12 +83,12 @@ Browser (vanilla JS + Chart.js)
          │  HTTP (127.0.0.1 only)
          ▼
    Ollama  (gemma3:4b, local GPU/CPU)
-   Route → Execute → Phrase → Post-check
+   Route → Execute → Phrase → Post check
 ```
 
 **LLM flow:**
 1. **Route** – Ollama outputs `{"tool": "...", "args": {...}}` in JSON mode
-2. **Execute** – a pure-Python tool runs (pandas / TabPFN), no LLM guessing
+2. **Execute** – a pure Python tool runs (pandas / TabPFN), no LLM guessing
 3. **Phrase** – Ollama rephrases the tool output in plain language
 4. **Post-check** – all numbers in the reply are verified against the tool output
 
@@ -111,10 +111,10 @@ Results are reported honestly — TabPFN doesn't always win against the baseline
 ## ⚠ Limitations
 
 - **Synthetic sample data** – the included CSV is generated, not real sales data.
-- **Small data** – TabPFN is designed for small tabular datasets. Items with fewer than 60 daily rows fall back to a moving-average baseline.
+- **Small data** – TabPFN is designed for small tabular datasets. Items with fewer than 60 daily rows fall back to a moving average baseline.
 - **Forecast error** – all forecasts have uncertainty. Always check the range, not just the median.
 - **Gemma 3:4b quality** – a small local model will sometimes phrase things oddly. Numbers always come from the deterministic tools.
-- **Single user** – state is in-process memory; a server restart clears uploaded data.
+- **Single user** – state is in process memory; a server restart clears uploaded data.
 
 ---
 
@@ -132,7 +132,7 @@ Results are reported honestly — TabPFN doesn't always win against the baseline
 ## 🤔 Why Open Source and Local?
 
 1. **Privacy** – Your bakery's sales data never leaves your machine.
-2. **Zero per-query cost** – No API bills, even if you ask 1 000 questions a day.
+2. **Zero per query cost** – No API bills, even if you ask 1 000 questions a day.
 3. **Swap models freely** – Change `CRUMB_MODEL=llama3.2:3b` in your env and the whole system uses a different model.
 4. **Transparency** – Every number Crumb shows comes from a deterministic pandas/TabPFN computation that you can audit.
 

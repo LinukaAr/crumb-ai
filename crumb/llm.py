@@ -25,7 +25,14 @@ from typing import Any
 import httpx
 import pandas as pd
 
-from crumb.config import CRUMB_MODEL, OLLAMA_BASE_URL, OLLAMA_TIMEOUT
+from crumb.config import (
+    CRUMB_MODEL,
+    OLLAMA_BASE_URL,
+    OLLAMA_CHAT_TOKENS,
+    OLLAMA_KEEP_ALIVE,
+    OLLAMA_ROUTE_TOKENS,
+    OLLAMA_TIMEOUT,
+)
 from crumb.tools import TOOL_SCHEMA_MAP, ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -44,6 +51,8 @@ def _ollama_generate(prompt: str, model: str = CRUMB_MODEL) -> str:
         "prompt": prompt,
         "format": "json",
         "stream": False,
+        "keep_alive": OLLAMA_KEEP_ALIVE,
+        "options": {"temperature": 0, "num_predict": OLLAMA_ROUTE_TOKENS},
     }
     try:
         resp = httpx.post(_GENERATE_URL, json=payload, timeout=OLLAMA_TIMEOUT)
@@ -73,6 +82,8 @@ def _ollama_chat(messages: list[dict], model: str = CRUMB_MODEL) -> str:
         "model": model,
         "messages": messages,
         "stream": False,
+        "keep_alive": OLLAMA_KEEP_ALIVE,
+        "options": {"temperature": 0.2, "num_predict": OLLAMA_CHAT_TOKENS},
     }
     try:
         resp = httpx.post(_CHAT_URL, json=payload, timeout=OLLAMA_TIMEOUT)
@@ -241,10 +252,12 @@ def _extract_date_text(message: str) -> str | None:
     """Extract common date phrases so date questions do not depend on the LLM."""
     patterns = (
         r"\b\d{4}-\d{1,2}-\d{1,2}\b",
-        r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|"
-        r"jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|"
-        r"oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?"
-        r"(?:,?\s+\d{4})?\b",
+        (
+            r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|"
+            r"jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|"
+            r"oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?"
+            r"(?:,?\s+\d{4})?\b"
+        ),
         r"\b\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?\b",
     )
     for pattern in patterns:
@@ -256,7 +269,12 @@ def _extract_date_text(message: str) -> str | None:
 
 def _normalise_date_text(text: str, registry: ToolRegistry) -> str | None:
     """Parse a user date and infer an omitted year from the uploaded data."""
-    cleaned = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", text.strip(), flags=re.I)
+    cleaned = re.sub(
+        r"(\d)(st|nd|rd|th)\b",
+        r"\1",
+        text.strip(),
+        flags=re.IGNORECASE,
+    )
     try:
         parsed = pd.Timestamp(cleaned)
     except (TypeError, ValueError):
@@ -344,6 +362,22 @@ def _keyword_route(message: str, registry: ToolRegistry) -> tuple[str, dict]:
     return "summarize", {"item": item, "period": period}
 
 
+def _has_confident_local_route(message: str) -> bool:
+    """Return whether simple rules can route this question without Ollama."""
+    msg = message.casefold()
+    if _looks_like_forecast_intent(msg) and not _looks_like_historical_intent(msg):
+        return True
+    if _looks_like_historical_intent(msg) and _extract_date_text(msg):
+        return True
+    return any(
+        phrase in msg
+        for phrase in (
+            "anomal", "unusual", "odd", "weird", "strange", "spike", "drop",
+            "top", "best-selling", "most popular", "rank", "list", "available",
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # Step 1: Route
 # ---------------------------------------------------------------------------
@@ -372,6 +406,13 @@ def _route(message: str, registry: ToolRegistry) -> tuple[str, dict]:
 
     Returns (tool_name, resolved_args).
     """
+    if _has_confident_local_route(message):
+        tool_name, args = _keyword_route(message, registry)
+        if tool_name == "forecast":
+            args = _resolve_dates_for_forecast(args)
+        logger.debug("Fast-routed to %s %s", tool_name, args)
+        return tool_name, args
+
     items_hint = ""
     if registry.has_data():
         items = sorted(registry._df["item"].unique().tolist())

@@ -14,6 +14,8 @@ Bound to 127.0.0.1 for privacy. 10 MB file-size limit enforced.
 from __future__ import annotations
 
 import logging
+import threading
+from concurrent.futures import Future
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -22,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from crumb.config import CRUMB_MODEL, MAX_UPLOAD_BYTES
 from crumb.data import dataframe_hash, load_csv
@@ -43,6 +46,8 @@ _registry = ToolRegistry()
 _BACKTEST_CACHE: dict[tuple[str, str], dict[str, float | None]] = {}
 _BACKTEST_IN_FLIGHT: set[tuple[str, str]] = set()
 _FORECAST_CACHE: dict[tuple[str, str, int], ForecastResult] = {}
+_FORECAST_IN_FLIGHT: dict[tuple[str, str, int], Future[ForecastResult]] = {}
+_FORECAST_CACHE_LOCK = threading.Lock()
 _ANOMALY_CACHE: dict[tuple[str, str, str | None, str | None], dict[str, Any]] = {}
 
 
@@ -68,6 +73,44 @@ def _compute_backtest(df: Any, data_hash: str, item: str) -> None:
         _BACKTEST_CACHE[cache_key] = {}
     finally:
         _BACKTEST_IN_FLIGHT.discard(cache_key)
+
+
+def _cached_forecast(
+    df: Any,
+    data_hash: str,
+    item: str,
+    days: int,
+) -> ForecastResult:
+    """Compute one forecast without duplicating concurrent model fits."""
+    cache_key = (data_hash, item, days)
+    with _FORECAST_CACHE_LOCK:
+        cached = _FORECAST_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+        pending = _FORECAST_IN_FLIGHT.get(cache_key)
+        if pending is None:
+            pending = Future()
+            _FORECAST_IN_FLIGHT[cache_key] = pending
+            owner = True
+        else:
+            owner = False
+
+    if not owner:
+        return pending.result()
+
+    try:
+        result = forecast(df, data_hash, item, horizon_days=days)
+        with _FORECAST_CACHE_LOCK:
+            _FORECAST_CACHE[cache_key] = result
+            pending.set_result(result)
+        return result
+    except Exception as exc:
+        with _FORECAST_CACHE_LOCK:
+            pending.set_exception(exc)
+        raise
+    finally:
+        with _FORECAST_CACHE_LOCK:
+            _FORECAST_IN_FLIGHT.pop(cache_key, None)
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +170,8 @@ async def upload_csv(file: UploadFile = File(...)):  # noqa: B008
     clear_cache()
     _BACKTEST_CACHE.clear()
     _BACKTEST_IN_FLIGHT.clear()
-    _FORECAST_CACHE.clear()
+    with _FORECAST_CACHE_LOCK:
+        _FORECAST_CACHE.clear()
     _ANOMALY_CACHE.clear()
     h = dataframe_hash(df)
     _STATE["df"] = df
@@ -177,13 +221,15 @@ async def get_forecast(
         "units": [round(float(u)) for u in item_df["units_sold"]],
     }
 
-    # Forecasts are deterministic for a loaded dataset, item, and horizon.
-    forecast_key = (_STATE["data_hash"], item, days)
-    if forecast_key not in _FORECAST_CACHE:
-        _FORECAST_CACHE[forecast_key] = forecast(
-            df, _STATE["data_hash"], item, horizon_days=days
-        )
-    result: ForecastResult = _FORECAST_CACHE[forecast_key]
+    # TabPFN fitting is CPU/GPU-heavy. Keep it out of the async event loop so
+    # changing the item remains responsive while another item is fitting.
+    result = await run_in_threadpool(
+        _cached_forecast,
+        df,
+        _STATE["data_hash"],
+        item,
+        days,
+    )
 
     # Backtests retrain models, so cache them and compute them after the fast
     # forecast response has been sent. The frontend refreshes while pending.

@@ -35,6 +35,11 @@ CRUMB_MODEL: str = os.environ.get("CRUMB_MODEL", "gemma3:4b")
 #: Base URL for the local Ollama HTTP API.
 OLLAMA_BASE_URL: str = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 
+#: Keep the local model loaded between requests and cap short responses.
+OLLAMA_KEEP_ALIVE: str = os.environ.get("OLLAMA_KEEP_ALIVE", "10m")
+OLLAMA_ROUTE_TOKENS: int = int(os.environ.get("OLLAMA_ROUTE_TOKENS", "80"))
+OLLAMA_CHAT_TOKENS: int = int(os.environ.get("OLLAMA_CHAT_TOKENS", "160"))
+
 #: Timeout in seconds for individual Ollama requests. The first local request
 #: can include model loading, especially on CPU-only machines.
 OLLAMA_TIMEOUT: float = float(os.environ.get("OLLAMA_TIMEOUT", "180"))

@@ -52,6 +52,7 @@ let state = {
   forecastDays: 14,
   chart: null,
   refreshVersion: 0,
+  dataVersion: 0,
   backtestTimer: null,
   forecastCache: {},
 };
@@ -94,6 +95,8 @@ async function handleUpload(file) {
   uploadArea.querySelector('p').textContent = 'Uploading…';
   try {
     const data = await API.upload(file);
+    const dataVersion = ++state.dataVersion;
+    state.refreshVersion += 1;
     state.items = data.items || [];
     state.forecastCache = {};
     populateItemSelect(state.items);
@@ -103,6 +106,7 @@ async function handleUpload(file) {
       itemSelect.value = state.selectedItem;
       setActiveItem(state.selectedItem);
       refreshAll();
+      prefetchForecasts(state.items, dataVersion);
     }
   } catch (err) {
     uploadArea.querySelector('p').textContent = '✗ ' + err.message;
@@ -300,22 +304,38 @@ async function refreshAll() {
   if (!state.selectedItem) return;
   const refreshVersion = ++state.refreshVersion;
   const requestedItem = state.selectedItem;
-  chartMeta.textContent = 'Loading forecast...';
+  const cachedForecast = state.forecastCache[requestedItem];
+  if (!cachedForecast) chartMeta.textContent = 'Loading forecast...';
   try {
-    const cachedForecast = state.forecastCache[requestedItem];
-    const forecastPromise = cachedForecast && !cachedForecast.backtest_pending
+    const forecastPromise = cachedForecast
       ? Promise.resolve(cachedForecast)
       : API.forecast(requestedItem, 30);
-    const [fcData, anomData] = await Promise.all([
-      forecastPromise,
-      API.anomalies(requestedItem),
-    ]);
+    const anomalyPromise = API.anomalies(requestedItem);
+    const fcData = await forecastPromise;
     if (refreshVersion !== state.refreshVersion) return;
     state.forecastCache[requestedItem] = fcData;
     renderForecast(fcData);
+    const anomData = await anomalyPromise;
+    if (refreshVersion !== state.refreshVersion) return;
     renderAnomalies(anomData);
   } catch (err) {
     console.error('Refresh error', err);
+  }
+}
+
+async function prefetchForecasts(items, dataVersion) {
+  // Warm item forecasts one at a time so dropdown changes reuse fitted models
+  // without competing for all local CPU/GPU resources at once.
+  for (const item of items) {
+    if (dataVersion !== state.dataVersion) return;
+    if (state.forecastCache[item]) continue;
+    try {
+      const data = await API.forecast(item, 30);
+      if (dataVersion !== state.dataVersion) return;
+      state.forecastCache[item] = data;
+    } catch (err) {
+      console.debug('Forecast prefetch skipped:', item, err);
+    }
   }
 }
 
