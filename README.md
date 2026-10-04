@@ -4,7 +4,7 @@
 
 Crumb is an AI-powered sales forecasting assistant for small bakeries and cafés. It lets you upload your sales history as a CSV, explore forecasts for any item, spot unusual sales days, and ask plain-language questions — **all without any data ever leaving your computer**.
 
-![Screenshot placeholder](docs/screenshot.png)
+![Screenshot placeholder](docs/ui.png)
 
 ---
 
